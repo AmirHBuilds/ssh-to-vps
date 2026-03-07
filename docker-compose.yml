@@ -1,0 +1,79 @@
+version: "3.9"
+
+services:
+  # ── Redis (Message Broker & Result Backend) ────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: ssh_bot_redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── Telegram Bot ────────────────────────────────────────────────────────────
+  bot:
+    build: .
+    container_name: ssh_bot_app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - bot_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: python -m bot.main
+
+  # ── Celery Worker ───────────────────────────────────────────────────────────
+  worker:
+    build: .
+    container_name: ssh_bot_worker
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - bot_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A workers.celery_app worker --loglevel=info --queues=ssh_connections,maintenance,celery -c 8
+
+  # ── Celery Beat (Periodic Tasks) ────────────────────────────────────────────
+  beat:
+    build: .
+    container_name: ssh_bot_beat
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+    volumes:
+      - bot_data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A workers.celery_app beat --loglevel=info
+
+  # ── Flower (Celery Monitor Dashboard) ──────────────────────────────────────
+  flower:
+    build: .
+    container_name: ssh_bot_flower
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      - PYTHONPATH=/app
+    ports:
+      - "5555:5555"
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: celery -A workers.celery_app flower --port=5555 --basic_auth=admin:admin
+
+volumes:
+  redis_data:
+  bot_data:

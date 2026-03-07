@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+.env.*
+!.env.example
+*.log
+.git
+.gitignore
+data/
+*.db
+*.sqlite3
+.DS_Store
+Thumbs.db
