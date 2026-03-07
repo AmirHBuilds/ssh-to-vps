@@ -204,6 +204,67 @@ async def disconnect_command(update: Update, context: ContextTypes.DEFAULT_TYPE)
     return MAIN_MENU
 
 
+async def _send_ctrl_shortcut(update: Update, ctrl_key: str, label: str):
+    user_id = update.effective_user.id
+    conn = get_connection(user_id)
+
+    if not conn or not conn.is_connected:
+        await update.message.reply_text(
+            "⚠️ <b>No active session.</b> Use /start to connect.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=main_menu_keyboard(),
+        )
+        return MAIN_MENU
+
+    try:
+        conn.send_control(ctrl_key)
+        await update.message.reply_text(
+            f"⌨️ Sent <b>{label}</b> to remote shell.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=session_keyboard(),
+        )
+    except SSHConnectionError as e:
+        await update.message.reply_text(
+            f"❌ <b>Failed to send {label}:</b> {e}",
+            parse_mode=ParseMode.HTML,
+            reply_markup=session_keyboard(),
+        )
+    return CONNECTED
+
+
+async def ctrl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a generic Ctrl+<key> to remote shell. Usage: /ctrl s"""
+    if not context.args:
+        await update.message.reply_text(
+            "ℹ️ Usage: <code>/ctrl &lt;letter&gt;</code>\n"
+            "Examples: <code>/ctrl s</code>, <code>/ctrl x</code>, <code>/ctrl c</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=session_keyboard(),
+        )
+        return CONNECTED
+
+    raw = context.args[0].strip().lower()
+    # Accept: s, ^s, ctrl+s, ctrl-s, ctrl_s
+    if raw.startswith("^") and len(raw) >= 2:
+        key = raw[1]
+    elif raw.startswith("ctrl"):
+        tail = raw[4:].lstrip("+-_")
+        key = tail[:1] if tail else ""
+    else:
+        key = raw[:1]
+
+    if not key.isalpha():
+        await update.message.reply_text(
+            "❌ Invalid key. Use a single letter, e.g. <code>/ctrl s</code>.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=session_keyboard(),
+        )
+        return CONNECTED
+
+    return await _send_ctrl_shortcut(update, key, f"Ctrl+{key.upper()}")
+
+
+
 # ── /status ───────────────────────────────────────────────────────────────────
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -732,7 +793,7 @@ async def do_connect(update: Update, context: ContextTypes.DEFAULT_TYPE, pd: dic
             f"💓 <b>Keep-Alive:</b> {'✅ Enabled' if keep_alive else '❌ Disabled'}\n\n"
             f"⌨️ <b>You're now in an interactive SSH session.</b>\n"
             f"Just type and send your commands!\n\n"
-            f"<i>Commands: /disconnect /status /help</i>"
+            f"<i>Commands: /ctrl &lt;letter&gt; /disconnect /status /help</i>"
         )
 
         if update.callback_query:
@@ -922,13 +983,20 @@ def build_app():
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            CallbackQueryHandler(handle_main_callback),
+            # Keep entry-point callbacks limited to main-menu actions so they don't
+            # preempt state-specific callbacks (e.g. auth selection) when
+            # allow_reentry=True.
+            CallbackQueryHandler(
+                handle_main_callback,
+                pattern=r"^(new_connection|saved_servers|manage_servers|status|help|main_menu)$",
+            ),
         ],
         states={
             MAIN_MENU: [
                 CallbackQueryHandler(handle_main_callback),
                 CommandHandler("status", status_command),
                 CommandHandler("help", help_command),
+                CommandHandler("ctrl", ctrl_command),
             ],
             ENTER_HOST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_host),
@@ -973,6 +1041,7 @@ def build_app():
             CONNECTED: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_connected_message),
                 CommandHandler("disconnect", disconnect_command),
+                CommandHandler("ctrl", ctrl_command),
                 CommandHandler("status", status_command),
                 CommandHandler("info", info_command),
                 CommandHandler("help", help_command),
@@ -985,6 +1054,7 @@ def build_app():
         fallbacks=[
             CommandHandler("start", start),
             CommandHandler("disconnect", disconnect_command),
+            CommandHandler("ctrl", ctrl_command),
             MessageHandler(filters.TEXT & ~filters.COMMAND, fallback),
         ],
         allow_reentry=True,

@@ -134,6 +134,7 @@ HELP_MESSAGE = """
 <b>⌨️ While Connected:</b>
 • Just type any command and send
 • For interactive scripts, type your response and send
+• Use /ctrl <letter> to send Ctrl+<letter> (e.g. /ctrl s, /ctrl x)
 • Use /disconnect to end the session
 • Use /info for session info
 
