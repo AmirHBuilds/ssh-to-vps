@@ -232,14 +232,37 @@ async def _send_ctrl_shortcut(update: Update, ctrl_key: str, label: str):
     return CONNECTED
 
 
-async def save_shortcut_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send Ctrl+Y (as requested) for interactive terminal apps."""
-    return await _send_ctrl_shortcut(update, "y", "Ctrl+Y")
+async def ctrl_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send a generic Ctrl+<key> to remote shell. Usage: /ctrl s"""
+    if not context.args:
+        await update.message.reply_text(
+            "ℹ️ Usage: <code>/ctrl &lt;letter&gt;</code>\n"
+            "Examples: <code>/ctrl s</code>, <code>/ctrl x</code>, <code>/ctrl c</code>",
+            parse_mode=ParseMode.HTML,
+            reply_markup=session_keyboard(),
+        )
+        return CONNECTED
 
+    raw = context.args[0].strip().lower()
+    # Accept: s, ^s, ctrl+s, ctrl-s, ctrl_s
+    if raw.startswith("^") and len(raw) >= 2:
+        key = raw[1]
+    elif raw.startswith("ctrl"):
+        tail = raw[4:].lstrip("+-_")
+        key = tail[:1] if tail else ""
+    else:
+        key = raw[:1]
 
-async def exit_shortcut_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Send Ctrl+X for interactive terminal apps (e.g. nano exit)."""
-    return await _send_ctrl_shortcut(update, "x", "Ctrl+X")
+    if not key.isalpha():
+        await update.message.reply_text(
+            "❌ Invalid key. Use a single letter, e.g. <code>/ctrl s</code>.",
+            parse_mode=ParseMode.HTML,
+            reply_markup=session_keyboard(),
+        )
+        return CONNECTED
+
+    return await _send_ctrl_shortcut(update, key, f"Ctrl+{key.upper()}")
+
 
 
 # ── /status ───────────────────────────────────────────────────────────────────
@@ -770,7 +793,7 @@ async def do_connect(update: Update, context: ContextTypes.DEFAULT_TYPE, pd: dic
             f"💓 <b>Keep-Alive:</b> {'✅ Enabled' if keep_alive else '❌ Disabled'}\n\n"
             f"⌨️ <b>You're now in an interactive SSH session.</b>\n"
             f"Just type and send your commands!\n\n"
-            f"<i>Commands: /save /exit /disconnect /status /help</i>"
+            f"<i>Commands: /ctrl &lt;letter&gt; /disconnect /status /help</i>"
         )
 
         if update.callback_query:
@@ -973,8 +996,7 @@ def build_app():
                 CallbackQueryHandler(handle_main_callback),
                 CommandHandler("status", status_command),
                 CommandHandler("help", help_command),
-                CommandHandler("save", save_shortcut_command),
-                CommandHandler("exit", exit_shortcut_command),
+                CommandHandler("ctrl", ctrl_command),
             ],
             ENTER_HOST: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, enter_host),
@@ -1019,8 +1041,7 @@ def build_app():
             CONNECTED: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, handle_connected_message),
                 CommandHandler("disconnect", disconnect_command),
-                CommandHandler("save", save_shortcut_command),
-                CommandHandler("exit", exit_shortcut_command),
+                CommandHandler("ctrl", ctrl_command),
                 CommandHandler("status", status_command),
                 CommandHandler("info", info_command),
                 CommandHandler("help", help_command),
@@ -1033,8 +1054,7 @@ def build_app():
         fallbacks=[
             CommandHandler("start", start),
             CommandHandler("disconnect", disconnect_command),
-            CommandHandler("save", save_shortcut_command),
-            CommandHandler("exit", exit_shortcut_command),
+            CommandHandler("ctrl", ctrl_command),
             MessageHandler(filters.TEXT & ~filters.COMMAND, fallback),
         ],
         allow_reentry=True,
