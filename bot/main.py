@@ -922,7 +922,13 @@ def build_app():
     conv_handler = ConversationHandler(
         entry_points=[
             CommandHandler("start", start),
-            CallbackQueryHandler(handle_main_callback),
+            # Keep entry-point callbacks limited to main-menu actions so they don't
+            # preempt state-specific callbacks (e.g. auth selection) when
+            # allow_reentry=True.
+            CallbackQueryHandler(
+                handle_main_callback,
+                pattern=r"^(new_connection|saved_servers|manage_servers|status|help|main_menu)$",
+            ),
         ],
         states={
             MAIN_MENU: [
