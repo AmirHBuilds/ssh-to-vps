@@ -138,6 +138,18 @@ class SSHConnection:
         with self._lock:
             self.channel.send(data + "\n")
 
+    def send_control(self, key: str) -> None:
+        """Send a control character (e.g. Ctrl+X => \x18)."""
+        if not self._connected or not self.channel:
+            raise SSHConnectionError("Not connected")
+
+        if not key or len(key) != 1 or not key.isalpha():
+            raise SSHConnectionError("Control key must be a single alphabet letter")
+
+        ctrl_char = chr(ord(key.upper()) - 64)
+        with self._lock:
+            self.channel.send(ctrl_char)
+
     def _read_output(self):
         buffer = ""
         last_send_time = time.time()
