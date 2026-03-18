@@ -8,11 +8,13 @@ import io
 import os
 import logging
 import socket
+import re
 from typing import Optional, Callable
 
 logger = logging.getLogger(__name__)
 
 KEEPALIVE_INTERVAL = int(os.getenv("SSH_KEEPALIVE_INTERVAL", "30"))
+OUTPUT_FLUSH_INTERVAL = float(os.getenv("OUTPUT_FLUSH_INTERVAL", "0.2"))
 
 
 class SSHConnectionError(Exception):
@@ -153,7 +155,6 @@ class SSHConnection:
     def _read_output(self):
         buffer = ""
         last_send_time = time.time()
-        FLUSH_INTERVAL = 0.8  # seconds to wait before sending partial output
         MAX_BUFFER = int(os.getenv("MAX_OUTPUT_LENGTH", "3500"))
 
         while not self._stop_event.is_set():
@@ -162,19 +163,13 @@ class SSHConnection:
                     chunk = self.channel.recv(4096).decode("utf-8", errors="replace")
                     buffer += chunk
                     last_send_time = time.time()
+                    if self._should_flush_immediately(buffer):
+                        self._flush_output(buffer, MAX_BUFFER)
+                        buffer = ""
                 else:
                     # Flush buffer if we have data and waited long enough
-                    if buffer and (time.time() - last_send_time > FLUSH_INTERVAL):
-                        cleaned = self._clean_ansi(buffer)
-                        if cleaned.strip():
-                            # Split large outputs
-                            while len(cleaned) > MAX_BUFFER:
-                                part = cleaned[:MAX_BUFFER]
-                                if self.on_output:
-                                    self.on_output(part, False)
-                                cleaned = cleaned[MAX_BUFFER:]
-                            if self.on_output:
-                                self.on_output(cleaned, False)
+                    if buffer and (time.time() - last_send_time > OUTPUT_FLUSH_INTERVAL):
+                        self._flush_output(buffer, MAX_BUFFER)
                         buffer = ""
 
                     # Check if channel closed
@@ -192,9 +187,53 @@ class SSHConnection:
                     self._handle_disconnect(f"⚠️ Connection lost: {str(e)}")
                 break
 
+    def _flush_output(self, text: str, max_buffer: int):
+        cleaned = self._clean_ansi(text)
+        if not cleaned.strip():
+            return
+
+        while len(cleaned) > max_buffer:
+            part = cleaned[:max_buffer]
+            if self.on_output:
+                self.on_output(part, False)
+            cleaned = cleaned[max_buffer:]
+
+        if self.on_output:
+            self.on_output(cleaned, False)
+
+    def _should_flush_immediately(self, text: str) -> bool:
+        """
+        Flush output immediately when the remote side is likely waiting for input.
+        This helps interactive scripts surface prompts before the user replies.
+        """
+        cleaned = self._clean_ansi(text)
+        if not cleaned:
+            return False
+
+        if cleaned.endswith("\n"):
+            return False
+
+        last_line = cleaned.splitlines()[-1] if cleaned.splitlines() else cleaned
+        stripped = last_line.rstrip()
+        if not stripped:
+            return False
+
+        prompt_patterns = (
+            "[QUESTION]",
+            "Enter choice",
+            "Enter the",
+            "Select ",
+            "Choose ",
+            "Password",
+            "Passphrase",
+        )
+        if any(token in stripped for token in prompt_patterns):
+            return True
+
+        return bool(re.search(r"(:|\?|#|\$|>)\s*$", stripped))
+
     def _clean_ansi(self, text: str) -> str:
         """Remove ANSI escape codes"""
-        import re
         ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
         text = ansi_escape.sub('', text)
         # Remove other control characters except newline and tab

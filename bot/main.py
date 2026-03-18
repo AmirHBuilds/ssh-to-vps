@@ -3,6 +3,7 @@ Main Telegram Bot — SSH Bot Handler
 Full interactive SSH over Telegram with inline keyboards
 """
 import asyncio
+import html
 import logging
 import os
 import threading
@@ -91,18 +92,22 @@ async def send_output_to_user(bot, chat_id: int, text: str, is_final: bool = Fal
     if not text:
         return
     try:
-        # Wrap in code block for terminal-like look
-        max_len = int(os.getenv("MAX_OUTPUT_LENGTH", "3500"))
-        chunks = [text[i:i+max_len] for i in range(0, len(text), max_len)]
-        for chunk in chunks:
+        for chunk in format_terminal_output(text):
             await bot.send_message(
                 chat_id=chat_id,
-                text=f"<pre>{chunk}</pre>",
+                text=chunk,
                 parse_mode=ParseMode.HTML,
                 reply_markup=session_keyboard() if is_final else None,
             )
     except Exception as e:
         logger.error(f"Failed to send output to {chat_id}: {e}")
+
+
+def format_terminal_output(text: str) -> list[str]:
+    """Chunk terminal output into Telegram-safe HTML <pre> blocks."""
+    max_len = int(os.getenv("MAX_OUTPUT_LENGTH", "3500"))
+    chunks = [text[i:i + max_len] for i in range(0, len(text), max_len)]
+    return [f"<pre>{html.escape(chunk)}</pre>" for chunk in chunks]
 
 
 def make_output_callback(bot, chat_id: int, loop: asyncio.AbstractEventLoop):
